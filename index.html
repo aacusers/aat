@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MainTokenCore Test Page</title>
+    <script src="https://cdn.jsdelivr.net/npm/web3@1.10.0/dist/web3.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 800px; margin: auto; }
+        .status { color: green; }
+        .error { color: red; }
+        .input-group { margin: 10px 0; }
+        button { padding: 5px 10px; cursor: pointer; }
+        table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        #logs { max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; }
+        .special-info { background-color: #e7f3ff; padding: 10px; margin: 10px 0; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>MainTokenCore Test</h2>
+        <div id="accountInfo">未连接钱包</div>
+        <div id="status" class="status"></div>
+        <div id="error" class="error"></div>
+        <div id="logs"></div>
+
+        <!-- ID 1003 BNB余额显示 -->
+        <div class="special-info">
+            <h3>ID 1003 信息</h3>
+            <div id="user1003Info">点击刷新按钮获取信息</div>
+            <button onclick="refreshUser1003Info()">刷新ID 1003信息</button>
+        </div>
+
+        <!-- 注册表单 
+        <div class="input-group">
+            <label>推荐人 ID:</label>
+            <input type="number" id="inviterId" min="100" value="100">
+            <button onclick="register()">注册 (0.01 BNB)</button>
+        </div>
+
+        <div class="input-group">
+            <label>升级等级 (1-9):</label>
+            <input type="number" id="level" min="1" max="9" value="1">
+            <button onclick="invest()">投资升级</button>
+        </div>
+        -->
+
+        <!-- 查询用户详情表单 -->
+        <div class="input-group">
+            <label>地址查询:</label>
+            <input type="text" id="queryAddress" placeholder="输入地址 (如 0x...)">
+            <button onclick="queryUser()">查询用户</button>
+            <div id="userResult"></div>
+        </div>
+
+        <!-- 新增：通过ID查询用户详情 -->
+        <div class="input-group">
+            <label>ID查询:</label>
+            <input type="number" id="queryUserId" placeholder="输入用户ID" min="100">
+            <button onclick="queryUserById()">查询用户(ID)</button>
+            <div id="userByIdResult"></div>
+        </div>
+
+        <!-- 新增：根据地址更改级别 -->
+        <div class="input-group">
+            <label>根据地址设置级别 (需要Owner权限):</label>
+            <input type="text" id="setLevelAddress" placeholder="输入地址 (如 0x...)">
+            <input type="number" id="setLevelByAddress" placeholder="设置级别 (1-9)" min="1" max="9">
+            <button onclick="setLevelByAddress()">设置级别(地址)</button>
+        </div>
+
+        <!-- 新增：根据ID更改级别 -->
+        <div class="input-group">
+            <label>根据ID设置级别 (需要Owner权限):</label>
+            <input type="number" id="setLevelUserId" placeholder="输入用户ID" min="100">
+            <input type="number" id="setLevelByUserId" placeholder="设置级别 (1-9)" min="1" max="9">
+            <button onclick="setLevelByUserId()">设置级别(ID)</button>
+        </div>
+
+        <!-- 查询点位表单 -->
+        <div class="input-group">
+            <label>查询点位:</label>
+            <input type="number" id="slotUserId" placeholder="用户ID" min="100">
+            <input type="number" id="slotLevel" placeholder="等级 (1-9)" min="1" max="9">
+            <button onclick="querySlot()">查询点位</button>
+            <div id="slotResult"></div>
+        </div>
+		
+		<div class="input-group">
+			<label>查询分红 (输入用户ID 和 区块范围):</label><br>
+			<input type="number" id="bonusUserId" placeholder="用户ID" min="100">
+			<input type="number" id="bonusRange" placeholder="区块数 (默认2000)" min="1">
+			<button onclick="queryDividendEvents()">查询分红记录</button>
+			<div id="bonusResult"></div>
+		</div>
+    </div>
+
+    <script>
+        let web3;
+		let contractAddress = '0x3f448cbB3a5f99149B203A2eb4D298A02BE28A2E';
+		
+        let contract;
+
+        // ABI (包含查询方法)
+        const abi = [
+            {"inputs":[{"internalType":"address","name":"_mainToken","type":"address"},{"internalType":"address","name":"_router","type":"address"},{"internalType":"address","name":"_dev","type":"address"},{"internalType":"address","name":"_genesis","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},
+            {"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"user","type":"address"},{"indexed":true,"internalType":"uint256","name":"userId","type":"uint256"},{"indexed":true,"internalType":"address","name":"inviter","type":"address"}],"name":"Registered","type":"event"},
+            {"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"user","type":"address"},{"indexed":true,"internalType":"uint8","name":"level","type":"uint8"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"}],"name":"LevelInvested","type":"event"},
+            {"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"user","type":"address"},{"indexed":true,"internalType":"address","name":"inviter","type":"address"},{"indexed":false,"internalType":"uint256","name":"rebateAmount","type":"uint256"}],"name":"BuyNewLevel","type":"event"},
+            {"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"fromUserId","type":"uint256"},{"indexed":true,"internalType":"uint256","name":"toUserId","type":"uint256"},{"indexed":false,"internalType":"uint8","name":"level","type":"uint8"},{"indexed":false,"internalType":"uint8","name":"status","type":"uint8"},{"indexed":false,"internalType":"uint128","name":"amountBNB","type":"uint128"},{"indexed":false,"internalType":"uint128","name":"amountMainToken","type":"uint128"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"Notify","type":"event"},
+            {"anonymous":false,"inputs":[{"indexed":true,"internalType":"address","name":"user","type":"address"},{"indexed":false,"internalType":"uint8","name":"level","type":"uint8"},{"indexed":false,"internalType":"bool","name":"isBlocked","type":"bool"}],"name":"UserBlocked","type":"event"},
+            {"inputs":[{"internalType":"uint256","name":"inviterId","type":"uint256"}],"name":"register","outputs":[],"stateMutability":"payable","type":"function"},
+            {"inputs":[{"internalType":"uint8","name":"level","type":"uint8"}],"name":"investLevel","outputs":[],"stateMutability":"payable","type":"function"},
+            {"inputs":[{"internalType":"address","name":"useraddress","type":"address"},{"internalType":"uint8","name":"level","type":"uint8"}],"name":"setAddressLevelByOwner","outputs":[],"stateMutability":"payable","type":"function"},
+            {"inputs":[{"internalType":"address","name":"useraddress","type":"address"},{"internalType":"uint256","name":"inviterId","type":"uint256"},{"internalType":"uint8","name":"level","type":"uint8"}],"name":"registerAddressByOwner","outputs":[],"stateMutability":"payable","type":"function"},
+            {"inputs":[{"internalType":"address","name":"","type":"address"}],"name":"users","outputs":[{"internalType":"uint256","name":"id","type":"uint256"},{"internalType":"address","name":"inviter","type":"address"},{"internalType":"uint8","name":"currentLevel","type":"uint8"},{"internalType":"bool","name":"isBlocked","type":"bool"},{"internalType":"address[3]","name":"invitedUsers","type":"address[3]"},{"internalType":"uint8","name":"invitedIndex","type":"uint8"},{"internalType":"uint256","name":"invitedCount","type":"uint256"}],"stateMutability":"view","type":"function"},
+            {"inputs":[{"internalType":"uint256","name":"userId","type":"uint256"},{"internalType":"uint8","name":"level","type":"uint8"}],"name":"getUserSlot","outputs":[{"internalType":"uint256","name":"point1","type":"uint256"},{"internalType":"uint256","name":"point2","type":"uint256"}],"stateMutability":"view","type":"function"},
+            {"inputs":[{"internalType":"address","name":"userAddress","type":"address"}],"name":"getFullUser","outputs":[{"internalType":"uint256","name":"id","type":"uint256"},{"internalType":"address","name":"inviter","type":"address"},{"internalType":"uint256","name":"inviterId","type":"uint256"},{"internalType":"uint8","name":"currentLevel","type":"uint8"},{"internalType":"bool","name":"isBlocked","type":"bool"},{"internalType":"uint256","name":"invitedCount","type":"uint256"},{"internalType":"address[3]","name":"invitedUsers","type":"address[3]"},{"internalType":"uint256[][2]","name":"slots","type":"uint256[][2]"}],"stateMutability":"view","type":"function"},
+            {"inputs":[{"internalType":"uint256","name":"id","type":"uint256"}],"name":"getUserById","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"}
+        ];
+
+        // 初始化 Web3
+        async function init() {
+            if (window.ethereum) {
+                web3 = new Web3(window.ethereum);
+                try {
+                    await window.ethereum.request({ method: 'eth_requestAccounts' });
+                    const accounts = await web3.eth.getAccounts();
+                    contract = new web3.eth.Contract(abi, contractAddress);
+                    updateAccountInfo(accounts[0]);
+                    listenEvents();
+                    // 自动刷新ID 1007信息
+                    refreshUser1003Info();
+                } catch (error) {
+                    document.getElementById('error').innerText = '连接钱包失败: ' + error.message;
+                }
+            } else {
+                document.getElementById('error').innerText = '请安装 MetaMask!';
+            }
+        }
+
+        // 新增：刷新ID 1003的信息
+        async function refreshUser1003Info() {
+            const resultDiv = document.getElementById('user1003Info');
+            resultDiv.innerHTML = '查询中...';
+            
+            try {
+                // 获取ID 1007的地址
+                const userAddress = await contract.methods.getUserById(1003).call();
+                if (!userAddress || userAddress === '0x0000000000000000000000000000000000000000') {
+                    resultDiv.innerHTML = 'ID 1007 不存在';
+                    return;
+                }
+                
+                // 获取BNB余额
+                const balance = await web3.eth.getBalance(userAddress);
+                const bnbBalance = web3.utils.fromWei(balance, 'ether');
+                
+                // 获取完整用户信息
+                const userData = await contract.methods.getFullUser(userAddress).call();
+                
+                resultDiv.innerHTML = `
+                    地址: ${userAddress}<br>
+                    BNB余额: ${parseFloat(bnbBalance).toFixed(6)} BNB<br>
+                    当前等级: ${userData.currentLevel || 0}<br>
+                    邀请人ID: ${userData.inviterId || 0}<br>
+                    邀请数量: ${userData.invitedCount || 0}
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = '查询失败: ' + error.message;
+            }
+        }
+
+        // 新增：通过ID查询用户详情
+        async function queryUserById() {
+            const userId = document.getElementById('queryUserId').value;
+            const resultDiv = document.getElementById('userByIdResult');
+            resultDiv.innerHTML = '查询中...';
+
+            if (!userId) {
+                resultDiv.innerHTML = '请输入用户ID';
+                return;
+            }
+
+            try {
+                // 先获取地址
+                const userAddress = await contract.methods.getUserById(userId).call();
+                if (!userAddress || userAddress === '0x0000000000000000000000000000000000000000') {
+                    resultDiv.innerHTML = '用户ID不存在';
+                    return;
+                }
+
+                // 获取完整用户信息
+                const userData = await contract.methods.getFullUser(userAddress).call();
+                const invitedUsers = userData.invitedUsers || [];
+                const slots = userData.slots || [[], []];
+
+                const invitedIds = await Promise.all(invitedUsers.map(async addr => {
+                    if (addr === '0x0000000000000000000000000000000000000000') return 0;
+                    try {
+                        const info = await contract.methods.getFullUser(addr).call();
+                        return info.id || 0;
+                    } catch (e) {
+                        return 0;
+                    }
+                }));
+
+                // 获取BNB余额
+                const balance = await web3.eth.getBalance(userAddress);
+                const bnbBalance = web3.utils.fromWei(balance, 'ether');
+
+                const table = `
+                    <table>
+                        <tr><th>字段</th><th>值</th></tr>
+                        <tr><td>ID</td><td>${userData.id || 0}</td></tr>
+                        <tr><td>地址</td><td>${userAddress}</td></tr>
+                        <tr><td>BNB余额</td><td>${parseFloat(bnbBalance).toFixed(6)} BNB</td></tr>
+                        <tr><td>邀请人地址</td><td>${userData.inviter || '无'}</td></tr>
+                        <tr><td>邀请人ID</td><td>${userData.inviterId || 0}</td></tr>
+                        <tr><td>当前等级</td><td>${userData.currentLevel || 0}</td></tr>
+                        <tr><td>封锁状态</td><td>${userData.isBlocked !== undefined ? (userData.isBlocked ? '是' : '否') : '未知'}</td></tr>
+                        <tr><td>邀请数量</td><td>${userData.invitedCount || 0}</td></tr>
+                        <tr><td>最近3个邀请ID</td><td>${invitedIds.join(', ') || '无'}</td></tr>
+                        <tr><td>点位 (每级)</td><td>${slots[0].map((p, i) => `V${i+1}: ${p || 0}, ${slots[1][i] || 0}`).join(' | ') || '无'}</td></tr>
+                    </table>
+                `;
+                resultDiv.innerHTML = table;
+            } catch (error) {
+                resultDiv.innerHTML = '查询失败: ' + error.message;
+            }
+        }
+
+        // 新增：根据地址设置级别
+        async function setLevelByAddress() {
+            const userAddress = document.getElementById('setLevelAddress').value.trim();
+            const level = parseInt(document.getElementById('setLevelByAddress').value);
+            
+            if (!web3.utils.isAddress(userAddress)) {
+                document.getElementById('error').innerText = '无效地址';
+                return;
+            }
+            
+            if (!level || level < 1 || level > 9) {
+                document.getElementById('error').innerText = '等级必须在1-9之间';
+                return;
+            }
+
+            const accounts = await web3.eth.getAccounts();
+            document.getElementById('status').innerText = '设置级别中...';
+
+            try {
+                await contract.methods.setAddressLevelByOwner(userAddress, level)
+                    .send({ from: accounts[0] })
+                    .on('transactionHash', hash => {
+                        document.getElementById('status').innerText = `交易提交: ${hash}`;
+                    })
+                    .on('receipt', receipt => {
+                        document.getElementById('status').innerText = `成功设置地址 ${userAddress} 的级别为 ${level}`;
+                        document.getElementById('error').innerText = '';
+                    })
+                    .on('error', error => {
+                        document.getElementById('error').innerText = '设置失败: ' + error.message;
+                        document.getElementById('status').innerText = '';
+                    });
+            } catch (error) {
+                document.getElementById('error').innerText = '设置失败: ' + error.message;
+                document.getElementById('status').innerText = '';
+            }
+        }
+
+        // 新增：根据ID设置级别
+        async function setLevelByUserId() {
+            const userId = document.getElementById('setLevelUserId').value;
+            const level = parseInt(document.getElementById('setLevelByUserId').value);
+            
+            if (!userId) {
+                document.getElementById('error').innerText = '请输入用户ID';
+                return;
+            }
+            
+            if (!level || level < 1 || level > 9) {
+                document.getElementById('error').innerText = '等级必须在1-9之间';
+                return;
+            }
+
+            document.getElementById('status').innerText = '查询用户地址...';
+
+            try {
+                // 先通过ID获取地址
+                const userAddress = await contract.methods.getUserById(userId).call();
+                if (!userAddress || userAddress === '0x0000000000000000000000000000000000000000') {
+                    document.getElementById('error').innerText = '用户ID不存在';
+                    document.getElementById('status').innerText = '';
+                    return;
+                }
+
+                const accounts = await web3.eth.getAccounts();
+                document.getElementById('status').innerText = '设置级别中...';
+
+                await contract.methods.setAddressLevelByOwner(userAddress, level)
+                    .send({ from: accounts[0] })
+                    .on('transactionHash', hash => {
+                        document.getElementById('status').innerText = `交易提交: ${hash}`;
+                    })
+                    .on('receipt', receipt => {
+                        document.getElementById('status').innerText = `成功设置用户ID ${userId} (地址: ${userAddress}) 的级别为 ${level}`;
+                        document.getElementById('error').innerText = '';
+                    })
+                    .on('error', error => {
+                        document.getElementById('error').innerText = '设置失败: ' + error.message;
+                        document.getElementById('status').innerText = '';
+                    });
+            } catch (error) {
+                document.getElementById('error').innerText = '设置失败: ' + error.message;
+                document.getElementById('status').innerText = '';
+            }
+        }
+				
+		async function queryDividendEvents() {
+			const userId = parseInt(document.getElementById('bonusUserId').value);
+			const totalRange = parseInt(document.getElementById('bonusRange').value || '200');
+			const resultDiv = document.getElementById('bonusResult');
+
+			if (!userId || isNaN(userId)) {
+				resultDiv.innerHTML = '请输入有效的用户 ID';
+				return;
+			}
+
+			resultDiv.innerHTML = '查询中...';
+
+			try {
+				const queryWeb3 = new Web3("https://rpc.ankr.com/bsc/2bd6c0010236463db32d50c26a7a5efb5cbcfcc799d5d7ea4b380a4d258d8e1a"); // ✅ 单独用查询节点
+				const queryContract = new queryWeb3.eth.Contract(abi, contractAddress);
+
+				const latestBlock = await queryWeb3.eth.getBlockNumber();
+				const fromBlock = Math.max(0, latestBlock - totalRange);
+
+				const step = 200000; // 安全范围
+				const matchedEvents = [];
+
+				for (let start = fromBlock; start <= latestBlock; start += step) {
+					const end = Math.min(start + step - 1, latestBlock);
+					const events = await queryContract.getPastEvents('Notify', {
+						filter: {
+							fromUserId: userId
+						},
+						fromBlock: start,
+						toBlock: end
+					});
+					
+
+					console.log(`共发现 ${events.length} 个Notify事件：`, events.map(e => e.returnValues));
+					for (const evt of events) {
+						const e = evt.returnValues;
+						console.log(evt.returnValues);
+
+						const eventToUserId = BigInt(e.fromUserId).toString();
+						const inputUserId = BigInt(userId).toString();
+
+						console.log(`[分红事件] 区块 ${evt.blockNumber}`);
+						console.log(`事件 toUserId: ${eventToUserId} | 输入 userId: ${inputUserId}`);
+
+						if (eventToUserId === inputUserId) {
+							console.log(`✅ 匹配成功: 事件 toUserId == ${inputUserId}`);
+							matchedEvents.push({ ...evt, parsed: e });
+						} else {
+							console.log(`❌ 不匹配`);
+						}
+					}
+				}
+
+				if (matchedEvents.length === 0) {
+					resultDiv.innerHTML = `用户 ${userId} 在最近 ${totalRange} 个区块中没有收到分红`;
+					return;
+				}
+
+				let html = `
+					<table>
+						<tr><th>区块</th><th>来源ID</th><th>等级</th><th>BNB</th><th>Token</th><th>时间</th><th>TxHash</th></tr>
+				`;
+
+				for (const evt of matchedEvents) {
+					const e = evt.parsed;
+					html += `
+						<tr>
+							<td>${evt.blockNumber}</td>
+							<td>${e.toUserId}</td>
+							<td>${e.level}</td>
+							<td>${web3.utils.fromWei(e.amountBNB, 'ether')}</td>
+							<td>${web3.utils.fromWei(e.amountMainToken, 'ether')}</td>
+							<td>${new Date(e.timestamp * 1000).toLocaleString()}</td>
+							<td><a href="https://bscscan.com/tx/${evt.transactionHash}" target="_blank">查看</a></td>
+						</tr>
+					`;
+				}
+
+				html += `</table>`;
+				resultDiv.innerHTML = html;
+
+			} catch (err) {
+				console.error('查询失败:', err);
+				resultDiv.innerHTML = '查询失败: ' + err.message;
+			}
+		}
+
+
+        // 更新账户信息
+        function updateAccountInfo(account) {
+            if (account) {
+                web3.eth.getBalance(account).then(balance => {
+                    const bnbBalance = web3.utils.fromWei(balance, 'ether');
+                    document.getElementById('accountInfo').innerText = `已连接: ${account} | BNB: ${bnbBalance} BNB`;
+                });
+            } else {
+                document.getElementById('accountInfo').innerText = '未连接钱包';
+            }
+        }
+
+		function listenEvents() {
+			try {
+				const wsProvider = new Web3.providers.WebsocketProvider('wss://bsc-ws-node.nariox.org:443');
+				const wsWeb3 = new Web3(wsProvider);
+
+				wsProvider.on('connect', () => {
+					console.log('✅ WebSocket connected, starting event listener...');
+					const wsContract = new wsWeb3.eth.Contract(abi, contractAddress);
+
+					wsContract.events.Notify({ fromBlock: 'latest' })
+						.on('data', event => {
+							const log = document.getElementById('logs');
+							const logEntry = `<p>Notify: from=${event.returnValues.fromUserId}, to=${event.returnValues.toUserId}, level=${event.returnValues.level}, status=${event.returnValues.status}, BNB=${web3.utils.fromWei(event.returnValues.amountBNB, 'ether')}, Token=${web3.utils.fromWei(event.returnValues.amountMainToken, 'ether')}, time=${new Date(event.returnValues.timestamp * 1000).toLocaleString()}</p>`;
+							log.innerHTML += logEntry;
+							log.scrollTop = log.scrollHeight;
+						})
+						.on('error', error => {
+							console.error('事件监听错误:', error.message);
+							document.getElementById('error').innerText = '事件监听失败: ' + error.message;
+							setTimeout(listenEvents, 5000);
+						});
+				});
+
+				wsProvider.on('error', (e) => {
+					console.error('WebSocket 连接失败:', e);
+					document.getElementById('error').innerText = 'WebSocket 连接失败，请检查网络或节点状态';
+					setTimeout(listenEvents, 5000); // 尝试重连
+				});
+
+				wsProvider.on('end', (e) => {
+					console.warn('WebSocket 连接断开:', e);
+					document.getElementById('error').innerText = 'WebSocket 连接断开，正在重连...';
+					setTimeout(listenEvents, 5000);
+				});
+
+			} catch (e) {
+				console.error('事件订阅异常:', e.message);
+				document.getElementById('error').innerText = '事件监听初始化失败: ' + e.message;
+			}
+		}
+
+
+        // 注册函数
+        async function register() {
+            const inviterId = document.getElementById('inviterId').value;
+            const amount = web3.utils.toWei('0.001', 'ether');
+            const accounts = await web3.eth.getAccounts();
+            document.getElementById('status').innerText = '交易处理中...';
+
+            contract.methods.register(inviterId)
+                .send({ from: accounts[0], value: amount })
+                .on('transactionHash', hash => {
+                    document.getElementById('status').innerText = `交易提交: ${hash}`;
+                })
+                .on('receipt', receipt => {
+                    document.getElementById('status').innerText = '注册成功!';
+                    updateAccountInfo(accounts[0]);
+                })
+                .on('error', error => {
+                    document.getElementById('error').innerText = '注册失败: ' + error.message;
+                    document.getElementById('status').innerText = '';
+                });
+        }
+
+        // 投资升级函数
+        async function invest() {
+            const level = parseInt(document.getElementById('level').value);
+            const amountEth = _expectedAmount(level);
+            const amount = web3.utils.toWei(amountEth, 'ether'); // 确保 amountEth 是字符串
+            const accounts = await web3.eth.getAccounts();
+            document.getElementById('status').innerText = '交易处理中...';
+            console.log(`Investing level ${level}, amountEth: ${amountEth} (type: ${typeof amountEth}), amountWei: ${amount} from ${accounts[0]}`);
+
+            try {
+                const gasEstimate = await contract.methods.investLevel(level).estimateGas({ from: accounts[0], value: amount });
+                await contract.methods.investLevel(level)
+                    .send({ from: accounts[0], value: amount, gas: gasEstimate, gasPrice: web3.utils.toWei('5', 'gwei') })
+                    .on('transactionHash', hash => {
+                        document.getElementById('status').innerText = `交易提交: ${hash}`;
+                    })
+                    .on('receipt', receipt => {
+                        document.getElementById('status').innerText = '升级成功!';
+                        updateAccountInfo(accounts[0]);
+                    })
+                    .on('error', error => {
+                        document.getElementById('error').innerText = '升级失败: ' + error.message;
+                        document.getElementById('status').innerText = '';
+                    });
+            } catch (error) {
+                document.getElementById('error').innerText = '升级失败 (预估 Gas 错误): ' + error.message;
+                document.getElementById('status').innerText = '';
+            }
+        }
+
+        // 查询用户详情
+        async function queryUser() {
+            const queryInput = document.getElementById('queryAddress').value.trim();
+            const resultDiv = document.getElementById('userResult');
+            resultDiv.innerHTML = '查询中...';
+
+            let userAddress = queryInput;
+            if (!web3.utils.isAddress(userAddress)) {
+                resultDiv.innerHTML = '无效地址';
+                return;
+            }
+
+            try {
+                const userData = await contract.methods.getFullUser(userAddress).call();
+                // 空值检查
+                const invitedUsers = userData.invitedUsers || [];
+                const slots = userData.slots || [[], []];
+
+				const invitedIds = await Promise.all(invitedUsers.map(async addr => {
+					if (addr === '0x0000000000000000000000000000000000000000') return 0;
+					try {
+						const info = await contract.methods.getFullUser(addr).call();
+						return info.id || 0;
+					} catch (e) {
+						return 0;
+					}
+				}));
+
+                const table = `
+                    <table>
+                        <tr><th>字段</th><th>值</th></tr>
+                        <tr><td>ID</td><td>${userData.id || 0}</td></tr>
+                        <tr><td>邀请人地址</td><td>${userData.inviter || '无'}</td></tr>
+                        <tr><td>邀请人ID</td><td>${userData.inviterId || 0}</td></tr>
+                        <tr><td>当前等级</td><td>${userData.currentLevel || 0}</td></tr>
+                        <tr><td>封锁状态</td><td>${userData.isBlocked !== undefined ? (userData.isBlocked ? '是' : '否') : '未知'}</td></tr>
+                        <tr><td>邀请数量</td><td>${userData.invitedCount || 0}</td></tr>
+                        <tr><td>最近3个邀请ID</td><td>${invitedIds.join(', ') || '无'}</td></tr>
+                        <tr><td>点位 (每级)</td><td>${slots[0].map((p, i) => `V${i+1}: ${p || 0}, ${slots[1][i] || 0}`).join(' | ') || '无'}</td></tr>
+                    </table>
+                `;
+                resultDiv.innerHTML = table;
+            } catch (error) {
+                resultDiv.innerHTML = '查询失败: ' + error.message;
+            }
+        }
+
+        // 查询点位
+        async function querySlot() {
+            const userId = document.getElementById('slotUserId').value;
+            const level = document.getElementById('slotLevel').value;
+            const resultDiv = document.getElementById('slotResult');
+            resultDiv.innerHTML = '查询中...';
+
+            if (!userId || !level) {
+                resultDiv.innerHTML = '请输入用户ID和等级';
+                return;
+            }
+
+            try {
+                const address = await contract.methods.getUserById(userId).call();
+                if (!address || address === '0x0000000000000000000000000000000000000000') {
+                    resultDiv.innerHTML = '用户ID不存在';
+                    return;
+                }
+                const slotData = await contract.methods.getUserSlot(userId, level).call();
+                const table = `
+                    <table>
+                        <tr><th>点位</th><th>值</th></tr>
+                        <tr><td>点位1</td><td>${slotData.point1 || 0}</td></tr>
+                        <tr><td>点位2</td><td>${slotData.point2 || 0}</td></tr>
+                    </table>
+                `;
+                resultDiv.innerHTML = table;
+            } catch (error) {
+                resultDiv.innerHTML = '查询失败: ' + error.message;
+            }
+        }
+
+        // 模拟 _expectedAmount (与合约一致)
+        function _expectedAmount(level) {
+            const levels = [0, 0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56];
+            return levels[level].toString(); // 转换为字符串
+        }
+
+        // 页面加载时初始化
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
